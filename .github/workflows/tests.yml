@@ -20,11 +20,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies
-        run: pip install cython setuptools paho-mqtt pyrf24 pytest
-
-      - name: Build extensions
-        run: python setup.py build_ext --inplace
+      - name: Install package
+        run: pip install -e ".[test]"
 
       - name: Run tests
         run: python -m pytest tests

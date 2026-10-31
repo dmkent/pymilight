@@ -16,8 +16,12 @@ package along with a web application and MQTT integration similar to esp8266_mil
 
 ## Getting started
 
-1. Get a Python environment going with Cython installed.
-1. Install the package (this is really for developement use at the moment... watch this space):
+1. Get a Python environment going on Linux (`pyrf24` doesn't support macOS or Windows).
+1. Install the package and its test dependencies (this is really for developement use at the moment... watch this space):
 ```
-python setup.py build_ext --inplace
+pip install -e ".[test]"
+```
+1. Run the tests:
+```
+python -m pytest tests
 ```

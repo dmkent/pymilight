@@ -39,10 +39,12 @@ setup(
     packages=find_packages(),
     ext_modules = cythonize(extensions),
     install_requires=[
-        "cython",
-        "paho.mqtt",
-        #"RF24", TODO - install
+        "paho-mqtt>=2.1,<3",
+        "pyrf24>=0.6,<0.7",
     ],
+    extras_require={
+        "test": ["pytest>=9,<10"],
+    },
 
     #entry_points={  # Optional
     #    'console_scripts': [
