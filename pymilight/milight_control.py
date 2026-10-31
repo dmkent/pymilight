@@ -12,7 +12,7 @@ if sys.platform == "darwin":
     time.CLOCK_MONOTONIC_RAW = None
 from threading import Thread
 
-import RF24
+from pyrf24 import RF24
 
 from pymilight.radio import NRF24MiLightRadio, MiLightRadioConfig
 from pymilight.packet_formatter import PyRgbCctPacketFormatter
@@ -46,7 +46,7 @@ class MiLightController(Thread):
         self.packet_repeat_minimum = 3
         self.last_send = 0
 
-        rf = RF24.RF24(RF24.RPI_V2_GPIO_P1_15, RF24.BCM2835_SPI_CS0, RF24.BCM2835_SPI_SPEED_8MHZ)
+        rf = RF24(22, 0, 8000000)
         self.radios = {
             name: NRF24MiLightRadio(rf, radio_config)
             for name, radio_config in MiLightRadioConfig.ALL_RADIOS.items()
