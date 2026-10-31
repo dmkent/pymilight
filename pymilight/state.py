@@ -1,7 +1,7 @@
 import json
 
 from pymilight.rgb_converter import hsv_to_rgb
-from pymilight.utils import white_val_to_mireds, mireds_to_white_val, white_val_to_kelvin, kelvin_to_white_val, rescale
+from pymilight.utils import white_val_to_mireds, mireds_to_white_val, white_val_to_kelvin, kelvin_to_white_val, rescale, is_on, rgb_to_hue_saturation
 
 
 FIELD_NAMES = [
@@ -18,7 +18,8 @@ FIELD_NAMES = [
     "color_temp",
     "bulb_mode",
     "computed_color",
-    "effect"
+    "effect",
+    "color_mode"
 ]
 
 
@@ -237,37 +238,77 @@ class State:
         return json.dumps(data)
 
     def patch(self, state):
-        if "state" in state:
-            self.state = state["state"] == "ON"
-        if "brightness" in state:
-            brightness = rescale(state["brightness"], 100, 255)
-            self.brightness = brightness
+        if "status" in state:
+            self.state = is_on(state["status"])
+        elif "state" in state:
+            self.state = is_on(state["state"])
+
+        # Any changes other than setting mode to night should take device out of
+        # night mode.
+        self.night_mode = False
+
+        # Fields are applied in the order they're sent to the bulb so that the last
+        # one to change the bulb mode wins.
+        if "command" in state:
+            command = state["command"]
+
+            if command == "set_white" or command == "white_mode":
+                self.set_white()
+            elif command == "night_mode":
+                self.bulb_mode = BULB_MODE_NIGHT
+        if "effect" in state:
+            self.patch_effect(state["effect"])
         if "hue" in state:
             self.hue = state["hue"]
             self.bulb_mode = BULB_MODE_COLOR
         if "saturation" in state:
             self.saturation = state["saturation"]
             self.bulb_mode = BULB_MODE_COLOR
-        if "mode" in state:
-            self.mode = state["mode"]
-            self.bulb_mode = BULB_MODE_SCENE
+        if "color" in state:
+            self.patch_color(state["color"])
+        if "temperature" in state:
+            self.mireds = white_val_to_mireds(state["temperature"])
+            self.bulb_mode = BULB_MODE_WHITE
         if "color_temp" in state:
             self.mireds = state["color_temp"]
             self.bulb_mode = BULB_MODE_WHITE
+        if "mode" in state:
+            self.mode = state["mode"]
+            self.bulb_mode = BULB_MODE_SCENE
 
-        # Any changes other than setting mode to night should take device out of
-        # night mode.
-        self.night_mode = False
+        # Brightness is stored per bulb mode, so the mode must be set first.
+        if "level" in state:
+            self.brightness = state["level"]
+        if "brightness" in state:
+            self.brightness = rescale(state["brightness"], 100, 255)
 
-        if "command" in state:
-            command = state["command"]
+    def patch_color(self, color):
+        hue_saturation = rgb_to_hue_saturation(color["r"], color["g"], color["b"])
+        if hue_saturation is None:
+            self.set_white()
+        else:
+            self.hue, self.saturation = hue_saturation
+            self.bulb_mode = BULB_MODE_COLOR
 
-            if command == "white_mode":
-                self.bulb_mode = BULB_MODE_WHITE
-            elif command == "night_mode":
-                self.bulb_mode = BULB_MODE_NIGHT
+    def patch_effect(self, effect):
+        if effect == "night_mode":
+            self.bulb_mode = BULB_MODE_NIGHT
+        elif effect == "white" or effect == "white_mode":
+            self.set_white()
+        else:
+            self.mode = int(effect)
+            self.bulb_mode = BULB_MODE_SCENE
+
+    def set_white(self):
+        # There's no white command in the protocol. The formatter uses the warmest
+        # temperature to switch the bulb to white.
+        self.mireds = white_val_to_mireds(100)
+        self.bulb_mode = BULB_MODE_WHITE
 
     def apply_color(self, state):
+        if self.hue is None:
+            return
+
         if self.saturation is None:
             # Default to fully saturated
             saturation = 1
@@ -284,7 +325,7 @@ class State:
         }
 
     def apply_field(self, partial_state, field):
-        if self.state is not None and field == "state" or field == "status":
+        if self.state is not None and (field == "state" or field == "status"):
             if self.state:
                 state = "ON"
             else:
@@ -342,6 +383,15 @@ class State:
 
         if self.kelvin is not None and field == "kelvin" and self.bulb_mode == BULB_MODE_WHITE:
             partial_state["kelvin"] = self.kelvin
+            return
+
+        # HomeAssistant ignores color and color_temp without this. It's only sent when
+        # those values are known, and scene and night modes have no equivalent.
+        if field == "color_mode":
+            if self.bulb_mode == BULB_MODE_COLOR and self.hue is not None:
+                partial_state["color_mode"] = "rgb"
+            elif self.bulb_mode == BULB_MODE_WHITE and self.mireds is not None:
+                partial_state["color_mode"] = "color_temp"
 
     def apply_state(self, partial_state, fields=FIELD_NAMES):
         for field in fields:

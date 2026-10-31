@@ -11,7 +11,7 @@ Port of PL1167_nRF24 by henryk.
 """
 import logging
 
-import RF24
+from pyrf24 import RF24, rf24_pa_dbm_e, rf24_datarate_e, rf24_crclength_e
 
 
 LOGGER = logging.getLogger(__name__)
@@ -60,14 +60,14 @@ class PL1167_nRF24(object):
         self._received = False
 
     def open(self):
-        self._radio.begin()
-        self._radio.setAutoAck(False)
-        self._radio.setPALevel(RF24.RF24_PA_MAX)
-        self._radio.setDataRate(RF24.RF24_1MBPS)
-        self._radio.disableCRC()
+        if not self._radio.begin():
+            raise RuntimeError("nRF24L01 not responding - check wiring and SPI.")
+        self._radio.set_auto_ack(False)
+        self._radio.set_radiation(level=rf24_pa_dbm_e.RF24_PA_MAX, speed=rf24_datarate_e.RF24_1MBPS)
+        self._radio.crc_length = rf24_crclength_e.RF24_CRC_DISABLED
 
         self._syncwordLength = 5
-        self._radio.setAddressWidth(self._syncwordLength)
+        self._radio.address_width = self._syncwordLength
 
         return self.recalc_parameters()
 
@@ -90,6 +90,8 @@ class PL1167_nRF24(object):
         self._radio.openReadingPipe(1, bytes(self._nrf_pipe))
 
         self._radio.setChannel(2 + self._channel)
+        # +2 for CRC. Without this RF24 pads every payload to 32 bytes.
+        self._radio.setPayloadSize(self._maxPacketLength + 2)
         return 0
 
     def setPreambleLength(self, preambleLength):

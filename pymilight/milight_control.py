@@ -12,13 +12,12 @@ if sys.platform == "darwin":
     time.CLOCK_MONOTONIC_RAW = None
 from threading import Thread
 
-import RF24
+from pyrf24 import RF24
 
 from pymilight.radio import NRF24MiLightRadio, MiLightRadioConfig
 from pymilight.packet_formatter import PyRgbCctPacketFormatter
-from pymilight.rgb_converter import rgb_to_hsv
 from pymilight.state_store import StateStore
-from pymilight.utils import constrain, rescale, mireds_to_white_val
+from pymilight.utils import constrain, rescale, mireds_to_white_val, is_on, rgb_to_hue_saturation
 
 LOGGER = logging.getLogger(__name__)
 ON = True
@@ -26,8 +25,7 @@ OFF = False
 
 
 class MiLightController(Thread):
-    DEFAULT_RESEND_COUNT = 10
-    RGB_WHITE_BOUNDARY = 40
+    DEFAULT_RESEND_COUNT = 50
 
     def __init__(self, inbound_queue, outbound_queue, shutdown_event, dry_run, *args, **kwargs):
         super(MiLightController, self).__init__(*args, **kwargs)
@@ -42,11 +40,11 @@ class MiLightController(Thread):
         self.current_radio = None
         self.throttle_threshold = 0.200
         self.throttle_sensitivity = 0
-        self.throttle_multiplier = 1
+        self.throttle_multiplier = 0
         self.packet_repeat_minimum = 3
         self.last_send = 0
 
-        rf = RF24.RF24(RF24.RPI_V2_GPIO_P1_15, RF24.BCM2835_SPI_CS0, RF24.BCM2835_SPI_SPEED_8MHZ)
+        rf = RF24(22, 0, 8000000)
         self.radios = {
             name: NRF24MiLightRadio(rf, radio_config)
             for name, radio_config in MiLightRadioConfig.ALL_RADIOS.items()
@@ -88,9 +86,9 @@ class MiLightController(Thread):
         if radio.available():
             while radio.available():
                 packet = radio.read(9)
-                parsed = radio.formatter.parse(packet)
-                print(parsed)
-                #self.outbound_queue.put(parsed)
+                device_type, device_id, group_id, msg = radio.formatter.parse(packet)
+                LOGGER.info("Received from remote: %s %04X %d %s", device_type, device_id, group_id, msg)
+                self.send_state_update(device_type, device_id, group_id, msg)
 
     def process_command(self, command):
         device_type, device_id, group_id, msg = command
@@ -153,11 +151,15 @@ class MiLightController(Thread):
         self.last_send = now
 
     def flush_packet(self, packet):
-        self.update_resend_count()
-        if self.dry_run:
-            LOGGER.critical(packet.hex())
-        else:
-            self.write(packet)
+        # Formatters may return several packets joined together (eg. pair/unpair).
+        packet_length = self.radios[self.current_radio]._config.packetLength
+        for start in range(0, len(packet), packet_length):
+            self.update_resend_count()
+            single_packet = packet[start:start + packet_length]
+            if self.dry_run:
+                LOGGER.critical(single_packet.hex())
+            else:
+                self.write(single_packet)
 
     def update(self, request):
         for packet in self.request_to_packets(request):
@@ -194,31 +196,14 @@ class MiLightController(Thread):
         # Convert RGB to HSV
         if "color" in request:
             color = request["color"]
+            hue_saturation = rgb_to_hue_saturation(color["r"], color["g"], color["b"])
 
-            red = color["r"]
-            green = color["g"]
-            blue = color["b"]
             # If close to white
-            if red > 256 - self.RGB_WHITE_BOUNDARY and \
-               green > 256 - self.RGB_WHITE_BOUNDARY and \
-               blue > 256 - self.RGB_WHITE_BOUNDARY:
+            if hue_saturation is None:
                 yield formatter.update_color_white()
             else:
-                hsv = rgb_to_hsv(red, green, blue)
-
-                hue = int(round(hsv[0] * 360, 0))
-                saturation = int(round(hsv[1] * 100, 0))
-
-                yield formatter.update_hue(hue)
-                yield formatter.update_saturation(saturation)
-
-        if "level" in request:
-            yield formatter.update_brightness(request["level"])
-
-        # HomeAssistant
-        if "brightness" in request:
-            scaled_brightness = rescale(int(request["brightness"]), 100, 255)
-            yield formatter.update_brightness(scaled_brightness)
+                yield formatter.update_hue(hue_saturation[0])
+                yield formatter.update_saturation(hue_saturation[1])
 
         if "temperature" in request:
             yield formatter.update_temperature(request["temperature"])
@@ -231,6 +216,15 @@ class MiLightController(Thread):
 
         if "mode" in request:
             yield formatter.update_mode(request["mode"])
+
+        # Brightness is specific to a bulb mode, so must be sent after the mode is set.
+        if "level" in request:
+            yield formatter.update_brightness(request["level"])
+
+        # HomeAssistant
+        if "brightness" in request:
+            scaled_brightness = rescale(int(request["brightness"]), 100, 255)
+            yield formatter.update_brightness(scaled_brightness)
 
         # Raw packet command/args
         if "button_id" in request and "argument" in request:
@@ -282,8 +276,6 @@ class MiLightController(Thread):
         elif "state" in request:
             status = request["state"]
         else:
-            return OFF
+            return None
 
-        if status.lower() == "on" or status.lower() == "true":
-            return ON
-        return OFF
+        return ON if is_on(status) else OFF

@@ -48,7 +48,7 @@ def main(args=None):
                 break
             try:
                 dtype, did, gid, value = outbound.get(timeout=2)
-                mqtt_client.send_update(dtype, did, gid, json.dumps(value))
+                mqtt_client.send_state(dtype, did, gid, json.dumps(value))
                 outbound.task_done()
             except queue.Empty:
                 pass

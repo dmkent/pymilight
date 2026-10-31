@@ -35,10 +35,11 @@ def bind_topic_string(topic, device_type, device_id, group_id):
 class MqttClient(object):
     def __init__(self, config, callback):
         self.mqtt_topic_pattern = config["mqtt_topic_pattern"]
-        self.mqtt_update_topic_pattern = config["mqtt_update_topic_pattern"]
         self.mqtt_state_topic_pattern = config["mqtt_state_topic_pattern"]
         self.mqtt_host = config["mqtt_host"]
         self.mqtt_port = config["mqtt_port"]
+        self.mqtt_username = config["mqtt_username"]
+        self.mqtt_password = config["mqtt_password"]
 
         self.handle_message = callback
         self._topic_regexp = topic_as_regexp(self.mqtt_topic_pattern)
@@ -52,6 +53,7 @@ class MqttClient(object):
 
     def _connect(self):
         self._mqtt = mqtt.Client()
+        self._mqtt.username_pw_set(username=self.mqtt_username, password=self.mqtt_password)
         self._mqtt.on_message = self.message_callback
         self._mqtt.on_connect = self.connect_callback
         LOGGER.info("Connecting to: %s", self.mqtt_host)
@@ -79,15 +81,6 @@ class MqttClient(object):
         LOGGER.info("Device %04X, group %u", device_id, group_id)
 
         self.handle_message(device_type, device_id, group_id, json_msg)
-
-    def send_update(self, device_type, device_id, group_id, update):
-        self._publish(
-            self.mqtt_update_topic_pattern,
-            device_type,
-            device_id,
-            group_id,
-            update
-        )
 
     def send_state(self, device_type, device_id, group_id, update):
         self._publish(
