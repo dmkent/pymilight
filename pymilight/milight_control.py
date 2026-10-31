@@ -26,7 +26,7 @@ OFF = False
 
 
 class MiLightController(Thread):
-    DEFAULT_RESEND_COUNT = 10
+    DEFAULT_RESEND_COUNT = 50
     RGB_WHITE_BOUNDARY = 40
 
     def __init__(self, inbound_queue, outbound_queue, shutdown_event, dry_run, *args, **kwargs):
@@ -42,7 +42,7 @@ class MiLightController(Thread):
         self.current_radio = None
         self.throttle_threshold = 0.200
         self.throttle_sensitivity = 0
-        self.throttle_multiplier = 1
+        self.throttle_multiplier = 0
         self.packet_repeat_minimum = 3
         self.last_send = 0
 
@@ -153,11 +153,15 @@ class MiLightController(Thread):
         self.last_send = now
 
     def flush_packet(self, packet):
-        self.update_resend_count()
-        if self.dry_run:
-            LOGGER.critical(packet.hex())
-        else:
-            self.write(packet)
+        # Formatters may return several packets joined together (eg. pair/unpair).
+        packet_length = self.radios[self.current_radio]._config.packetLength
+        for start in range(0, len(packet), packet_length):
+            self.update_resend_count()
+            single_packet = packet[start:start + packet_length]
+            if self.dry_run:
+                LOGGER.critical(single_packet.hex())
+            else:
+                self.write(single_packet)
 
     def update(self, request):
         for packet in self.request_to_packets(request):
@@ -282,7 +286,7 @@ class MiLightController(Thread):
         elif "state" in request:
             status = request["state"]
         else:
-            return OFF
+            return None
 
         if status.lower() == "on" or status.lower() == "true":
             return ON
