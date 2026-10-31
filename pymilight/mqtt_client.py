@@ -39,6 +39,8 @@ class MqttClient(object):
         self.mqtt_state_topic_pattern = config["mqtt_state_topic_pattern"]
         self.mqtt_host = config["mqtt_host"]
         self.mqtt_port = config["mqtt_port"]
+        self.mqtt_username = config["mqtt_username"]
+        self.mqtt_password = config["mqtt_password"]
 
         self.handle_message = callback
         self._topic_regexp = topic_as_regexp(self.mqtt_topic_pattern)
@@ -52,6 +54,7 @@ class MqttClient(object):
 
     def _connect(self):
         self._mqtt = mqtt.Client()
+        self._mqtt.username_pw_set(username=self.mqtt_username, password=self.mqtt_password)
         self._mqtt.on_message = self.message_callback
         self._mqtt.on_connect = self.connect_callback
         LOGGER.info("Connecting to: %s", self.mqtt_host)
